@@ -1,45 +1,12 @@
-import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
-
 plugins {
-    id 'org.jetbrains.kotlin.jvm' version '1.9.25' apply false
-    id 'com.github.johnrengelman.shadow' version '8.1.1' apply false
-    id 'org.springframework.boot' version '3.5.4' apply false
+    id "org.jetbrains.kotlin.jvm" version "1.9.25" apply false
+    id "com.github.johnrengelman.shadow" version "8.1.1" apply false
 }
 
 allprojects {
-    group = 'com.example'
-    version = '0.0.1'
-    repositories { mavenCentral() }
-}
-
-subprojects {
-    apply plugin: 'base'
-    apply plugin: 'org.jetbrains.kotlin.jvm'
-    apply plugin: 'com.github.johnrengelman.shadow'
-
-    java {
-        toolchain { languageVersion = JavaLanguageVersion.of(17) }
+    group = "com.example"
+    version = "0.0.1"
+    repositories {
+        mavenCentral()
     }
-
-    dependencies {
-        implementation "com.amazonaws:aws-lambda-java-core:1.2.3"
-        implementation "com.fasterxml.jackson.module:jackson-module-kotlin:2.17.2"
-        implementation platform("software.amazon.awssdk:bom:2.25.62")
-        implementation "software.amazon.awssdk:s3"
-        testImplementation "org.jetbrains.kotlin:kotlin-test"
-    }
-
-    tasks.withType(KotlinCompile).configureEach {
-        kotlinOptions.jvmTarget = '17'
-    }
-
-    tasks.named('shadowJar') {
-        archiveBaseName = project.name
-        archiveVersion = ''
-        archiveClassifier = ''
-        mergeServiceFiles()
-    }
-
-    tasks.matching { it.name == 'bootJar' }.configureEach { it.enabled = false }
-    tasks.named('jar') { it.enabled = true }
 }
