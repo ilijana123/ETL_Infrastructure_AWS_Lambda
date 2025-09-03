@@ -19,7 +19,7 @@ dependencies {
 }
 
 tasks.named("shadowJar") {
-    archiveBaseName.set("data-splitter")
+    archiveBaseName.set("change-detector")
     archiveClassifier.set("all")
     archiveVersion.set("")
     mergeServiceFiles()
