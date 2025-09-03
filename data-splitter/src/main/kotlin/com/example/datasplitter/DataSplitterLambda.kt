@@ -56,29 +56,30 @@ class DataSplitterLambda : RequestHandler<SplitterRequest, SplitterResponse> {
             }
 
             context.logger.log("Download successful, processing stream...\n")
+                GZIPInputStream(response.body()).bufferedReader().use { reader ->
+                    val currentChunkLines = mutableListOf<String>()
+                    var linesInCurrentChunk = 0
 
-            GZIPInputStream(response.body()).bufferedReader().use { reader ->
-                val currentChunkLines = mutableListOf<String>()
-                var linesInCurrentChunk = 0
-
-                reader.lineSequence().forEachIndexed { lineIndex, line ->
-                    if (line.isBlank()) {
-                        skippedLines++
-                        return@forEachIndexed
-                    }
-
-                    if (!isValidJson(line, context)) {
-                        skippedLines++
-                        if (lineIndex < 10) {
-                            context.logger.log("Skipping invalid JSON at line $lineIndex: ${line.take(100)}...\n")
+                    reader.lineSequence().forEachIndexed { lineIndex, line ->
+                        if (line.isBlank()) {
+                            skippedLines++
+                            return@forEachIndexed
                         }
-                        return@forEachIndexed
-                    }
 
-                    if (shouldProcessLine(line, request.lastProcessedTimestamp, context)) {
-                        currentChunkLines.add(line)
-                        linesInCurrentChunk++
-                        totalLines++
+                        val jsonNode = try {
+                            objectMapper.readTree(line)
+                        } catch (e: Exception) {
+                            skippedLines++
+                            if (lineIndex < 10) {
+                                context.logger.log("Skipping invalid JSON at line $lineIndex: ${line.take(100)}...\n")
+                            }
+                            return@forEachIndexed
+                        }
+
+                        if (shouldProcessLine(jsonNode, line, request.lastProcessedTimestamp, context)) {
+                            currentChunkLines.add(line)
+                            linesInCurrentChunk++
+                            totalLines++
 
                         if (linesInCurrentChunk >= chunkSize) {
                             val chunkInfo = saveChunkToS3(currentChunkLines, currentChunk, processingTimestamp, context)
@@ -123,26 +124,19 @@ class DataSplitterLambda : RequestHandler<SplitterRequest, SplitterResponse> {
         }
     }
 
-    private fun shouldProcessLine(line: String, lastProcessedTimestamp: String?, context: Context): Boolean {
+    private fun shouldProcessLine(json: JsonNode, line: String, lastProcessedTimestamp: String?, context: Context): Boolean {
         if (lastProcessedTimestamp == null) return true
 
-        return try {
-            val json: JsonNode = objectMapper.readTree(line)
-            val lastModified = json.get("last_modified_t")?.asLong()
+        val lastModified = json.get("last_modified_t")?.asLong()
 
-            if (lastModified != null) {
-                val productTimestamp = Instant.ofEpochSecond(lastModified)
-                    .atZone(ZoneOffset.UTC)
-                    .toLocalDateTime()
-                    .toString()
-                return productTimestamp > lastProcessedTimestamp
-            } else {
-                // If no timestamp, include the line
-                context.logger.log("No last_modified_t field found, including line\n")
-                return true
-            }
-        } catch (e: Exception) {
-            context.logger.log("Warning: Could not parse timestamp for line, including it: ${e.message}\n")
+        if (lastModified != null) {
+            val productTimestamp = Instant.ofEpochSecond(lastModified)
+                .atZone(ZoneOffset.UTC)
+                .toLocalDateTime()
+                .toString()
+            return productTimestamp > lastProcessedTimestamp
+        } else {
+            context.logger.log("No last_modified_t field found, including line\n")
             return true
         }
     }
