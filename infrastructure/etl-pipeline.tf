@@ -12,16 +12,9 @@ resource "aws_sfn_state_machine" "openfoodfacts_etl" {
         Resource = "arn:aws:states:::lambda:invoke"
         Parameters = {
           FunctionName = aws_lambda_function.change_detector.function_name
-          Payload = {
+          "Payload" = {
             action = "check_for_updates"
           }
-        }
-        ResultSelector = {
-          hasUpdates             = "$.Payload.hasUpdates"
-          downloadUrl            = "$.Payload.downloadUrl"
-          latestTimestamp        = "$.Payload.latestTimestamp"
-          lastProcessedTimestamp = "$.Payload.lastProcessedTimestamp"
-          message                = "$.Payload.message"
         }
         ResultPath = "$.changeDetection"
         Next = "HasNewData?"
@@ -46,12 +39,18 @@ resource "aws_sfn_state_machine" "openfoodfacts_etl" {
         Parameters = {
           FunctionName = aws_lambda_function.data_splitter.function_name
           Payload = {
-            "downloadUrl.$" = "$.changeDetection.downloadUrl"
-            "lastProcessedTimestamp.$" = "$.changeDetection.lastProcessedTimestamp"
+            "downloadUrl.$" = "$.changeDetection.Payload.downloadUrl"
           }
         }
         ResultPath = "$.splitResult"
         Next = "ProcessChunksInParallel"
+        TimeoutSeconds = 900
+        Retry = [{
+          ErrorEquals = ["States.ALL"]
+          IntervalSeconds = 30
+          MaxAttempts = 3
+          BackoffRate = 2.0
+        }]
       }
       ProcessChunksInParallel = {
         Type = "Map"
