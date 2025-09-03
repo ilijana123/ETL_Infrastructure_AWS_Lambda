@@ -12,6 +12,7 @@ resource "aws_sfn_state_machine" "openfoodfacts_etl" {
         Resource = "arn:aws:states:::lambda:invoke"
         Parameters = {
           FunctionName = aws_lambda_function.change_detector.function_name
+          # Instead of nesting under Payload, send directly
           "Payload" = {
             action = "check_for_updates"
           }
