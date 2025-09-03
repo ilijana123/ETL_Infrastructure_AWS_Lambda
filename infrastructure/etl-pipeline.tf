@@ -12,7 +12,9 @@ resource "aws_sfn_state_machine" "openfoodfacts_etl" {
         Resource = "arn:aws:states:::lambda:invoke"
         Parameters = {
           FunctionName = aws_lambda_function.change_detector.function_name
-          "Payload.$" = "$"
+          "Payload" = {
+            action = "check_for_updates"
+          }
         }
         ResultPath = "$.changeDetection"
         Next = "HasNewData?"
@@ -105,8 +107,8 @@ resource "aws_sfn_state_machine" "openfoodfacts_etl" {
         Resource = "arn:aws:states:::lambda:invoke"
         Parameters = {
           FunctionName = aws_lambda_function.change_detector.function_name
-          Payload = {
-            action = "update_timestamp"
+          "Payload" = {
+            action       = "update_timestamp"
             "newTimestamp.$" = "$.changeDetection.Payload.latestTimestamp"
           }
         }
