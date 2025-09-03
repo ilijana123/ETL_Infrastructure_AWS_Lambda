@@ -18,11 +18,30 @@ import java.time.ZoneOffset
 import java.util.zip.GZIPInputStream
 import java.util.zip.GZIPOutputStream
 
-class DataSplitterLambda : RequestHandler<SplitterRequest, SplitterResponse> {
+data class SplitterRequest(
+    val downloadUrl: String,
+    val lastProcessedTimestamp: String?
+)
+
+data class SplitterResponse(
+    val chunks: List<ChunkInfo>,
+    val totalLines: Int,
+    val processingTimestamp: String
+)
+
+data class ChunkInfo(
+    val bucket: String,
+    val key: String,
+    val chunkId: String,
+    val estimatedLines: Int
+)
+
+class DataSplitterLambda : RequestHandler<Map<String, Any>, SplitterResponse> {
 
     private val s3 = S3Client.create()
     private val httpClient = HttpClient.newHttpClient()
     private val objectMapper = jacksonObjectMapper().apply {
+        // Configure to be more lenient with JSON parsing
         configure(com.fasterxml.jackson.core.JsonParser.Feature.ALLOW_UNQUOTED_FIELD_NAMES, true)
         configure(com.fasterxml.jackson.core.JsonParser.Feature.ALLOW_SINGLE_QUOTES, true)
         configure(com.fasterxml.jackson.core.JsonParser.Feature.ALLOW_COMMENTS, true)
@@ -32,7 +51,24 @@ class DataSplitterLambda : RequestHandler<SplitterRequest, SplitterResponse> {
     private val bucketName = System.getenv("PROCESSING_BUCKET") ?: "nutritiveappbucket"
     private val chunkSize = System.getenv("CHUNK_SIZE")?.toIntOrNull() ?: 5000 // lines per chunk
 
-    override fun handleRequest(request: SplitterRequest, context: Context): SplitterResponse {
+    // Handle incoming requests, adapting to the payload type
+    override fun handleRequest(input: Map<String, Any>, context: Context): SplitterResponse {
+        val request = if (input.containsKey("source") && input["source"] == "aws.events") {
+            // It's a scheduled event, use environment variables or default values
+            context.logger.log("Received a scheduled event. Using default values for SplitterRequest.\n")
+            SplitterRequest(
+                downloadUrl = System.getenv("DOWNLOAD_URL") ?: "https://static.openfoodfacts.org/data/en.openfoodfacts.org.products.jsonl.gz",
+                lastProcessedTimestamp = System.getenv("LAST_PROCESSED_TIMESTAMP")
+            )
+        } else {
+            // It's the expected SplitterRequest
+            objectMapper.convertValue(input, SplitterRequest::class.java)
+        }
+
+        return processData(request, context)
+    }
+
+    private fun processData(request: SplitterRequest, context: Context): SplitterResponse {
         context.logger.log("Starting data download and splitting from: ${request.downloadUrl}\n")
 
         val processingTimestamp = LocalDateTime.now().toString()
@@ -56,30 +92,32 @@ class DataSplitterLambda : RequestHandler<SplitterRequest, SplitterResponse> {
             }
 
             context.logger.log("Download successful, processing stream...\n")
-                GZIPInputStream(response.body()).bufferedReader().use { reader ->
-                    val currentChunkLines = mutableListOf<String>()
-                    var linesInCurrentChunk = 0
 
-                    reader.lineSequence().forEachIndexed { lineIndex, line ->
-                        if (line.isBlank()) {
-                            skippedLines++
-                            return@forEachIndexed
+            GZIPInputStream(response.body()).bufferedReader().use { reader ->
+                val currentChunkLines = mutableListOf<String>()
+                var linesInCurrentChunk = 0
+
+                reader.lineSequence().forEachIndexed { lineIndex, line ->
+                    if (line.isBlank()) {
+                        skippedLines++
+                        return@forEachIndexed
+                    }
+
+                    // Parse JSON only once
+                    val jsonNode = try {
+                        objectMapper.readTree(line)
+                    } catch (e: Exception) {
+                        skippedLines++
+                        if (lineIndex < 10) { // Log first few invalid lines for debugging
+                            context.logger.log("Skipping invalid JSON at line $lineIndex: ${line.take(100)}...\n")
                         }
+                        return@forEachIndexed
+                    }
 
-                        val jsonNode = try {
-                            objectMapper.readTree(line)
-                        } catch (e: Exception) {
-                            skippedLines++
-                            if (lineIndex < 10) {
-                                context.logger.log("Skipping invalid JSON at line $lineIndex: ${line.take(100)}...\n")
-                            }
-                            return@forEachIndexed
-                        }
-
-                        if (shouldProcessLine(jsonNode, line, request.lastProcessedTimestamp, context)) {
-                            currentChunkLines.add(line)
-                            linesInCurrentChunk++
-                            totalLines++
+                    if (shouldProcessLine(jsonNode, request.lastProcessedTimestamp, context)) {
+                        currentChunkLines.add(line)
+                        linesInCurrentChunk++
+                        totalLines++
 
                         if (linesInCurrentChunk >= chunkSize) {
                             val chunkInfo = saveChunkToS3(currentChunkLines, currentChunk, processingTimestamp, context)
@@ -115,16 +153,7 @@ class DataSplitterLambda : RequestHandler<SplitterRequest, SplitterResponse> {
         }
     }
 
-    private fun isValidJson(line: String, context: Context): Boolean {
-        return try {
-            objectMapper.readTree(line)
-            true
-        } catch (e: Exception) {
-            false
-        }
-    }
-
-    private fun shouldProcessLine(json: JsonNode, line: String, lastProcessedTimestamp: String?, context: Context): Boolean {
+    private fun shouldProcessLine(json: JsonNode, lastProcessedTimestamp: String?, context: Context): Boolean {
         if (lastProcessedTimestamp == null) return true
 
         val lastModified = json.get("last_modified_t")?.asLong()
@@ -136,6 +165,7 @@ class DataSplitterLambda : RequestHandler<SplitterRequest, SplitterResponse> {
                 .toString()
             return productTimestamp > lastProcessedTimestamp
         } else {
+            // If no timestamp, include the line
             context.logger.log("No last_modified_t field found, including line\n")
             return true
         }
