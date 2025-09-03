@@ -2,7 +2,6 @@ package com.example.changedetector
 
 import com.amazonaws.services.lambda.runtime.Context
 import com.amazonaws.services.lambda.runtime.RequestHandler
-import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import software.amazon.awssdk.services.s3.S3Client
 import software.amazon.awssdk.services.s3.model.GetObjectRequest
 import software.amazon.awssdk.services.s3.model.PutObjectRequest
@@ -14,7 +13,7 @@ import java.net.URI
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 
-class ChangeDetectorLambda : RequestHandler<ChangeDetectionRequest, ChangeDetectionResponse> {
+class ChangeDetectorLambda : RequestHandler<Map<String, Any>, ChangeDetectionResponse> {
 
     private val s3 = S3Client.create()
     private val httpClient = HttpClient.newHttpClient()
@@ -22,16 +21,17 @@ class ChangeDetectorLambda : RequestHandler<ChangeDetectionRequest, ChangeDetect
     private val timestampKey = "etl/last-processed-timestamp.txt"
     private val openFoodFactsUrl = "https://static.openfoodfacts.org/data/en.openfoodfacts.org.products.jsonl.gz"
 
-    override fun handleRequest(request: ChangeDetectionRequest, context: Context): ChangeDetectionResponse {
-        context.logger.log("ChangeDetector action: ${request.action}\n")
+    override fun handleRequest(event: Map<String, Any>, context: Context): ChangeDetectionResponse {
+        context.logger.log("Incoming event: $event\n")
 
-        return when (request.action) {
+        val payload = (event["Payload"] as? Map<*, *>) ?: event
+        val action = payload["action"] as? String ?: "unknown"
+        val newTimestamp = payload["newTimestamp"] as? String
+
+        return when (action) {
             "check_for_updates" -> checkForUpdates(context)
-            "update_timestamp" -> updateTimestamp(request.newTimestamp!!, context)
-            else -> ChangeDetectionResponse(
-                hasUpdates = false,
-                message = "Unknown action: ${request.action}"
-            )
+            "update_timestamp" -> updateTimestamp(newTimestamp!!, context)
+            else -> ChangeDetectionResponse(false, message = "Unknown action: $action")
         }
     }
 
