@@ -2,6 +2,7 @@ package com.example.datasplitter
 
 import com.amazonaws.services.lambda.runtime.Context
 import com.amazonaws.services.lambda.runtime.RequestHandler
+import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import software.amazon.awssdk.core.sync.RequestBody
 import software.amazon.awssdk.services.s3.S3Client
@@ -21,7 +22,12 @@ class DataSplitterLambda : RequestHandler<SplitterRequest, SplitterResponse> {
 
     private val s3 = S3Client.create()
     private val httpClient = HttpClient.newHttpClient()
-    private val objectMapper = jacksonObjectMapper()
+    private val objectMapper = jacksonObjectMapper().apply {
+        configure(com.fasterxml.jackson.core.JsonParser.Feature.ALLOW_UNQUOTED_FIELD_NAMES, true)
+        configure(com.fasterxml.jackson.core.JsonParser.Feature.ALLOW_SINGLE_QUOTES, true)
+        configure(com.fasterxml.jackson.core.JsonParser.Feature.ALLOW_COMMENTS, true)
+        configure(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
+    }
 
     private val bucketName = System.getenv("PROCESSING_BUCKET") ?: "nutritiveappbucket"
     private val chunkSize = System.getenv("CHUNK_SIZE")?.toIntOrNull() ?: 5000 // lines per chunk
@@ -33,6 +39,7 @@ class DataSplitterLambda : RequestHandler<SplitterRequest, SplitterResponse> {
         val chunks = mutableListOf<ChunkInfo>()
         var totalLines = 0
         var currentChunk = 1
+        var skippedLines = 0
 
         try {
             val httpRequest = HttpRequest.newBuilder()
@@ -54,8 +61,19 @@ class DataSplitterLambda : RequestHandler<SplitterRequest, SplitterResponse> {
                 val currentChunkLines = mutableListOf<String>()
                 var linesInCurrentChunk = 0
 
-                reader.lineSequence().forEach { line ->
-                    if (line.isBlank()) return@forEach
+                reader.lineSequence().forEachIndexed { lineIndex, line ->
+                    if (line.isBlank()) {
+                        skippedLines++
+                        return@forEachIndexed
+                    }
+
+                    if (!isValidJson(line, context)) {
+                        skippedLines++
+                        if (lineIndex < 10) {
+                            context.logger.log("Skipping invalid JSON at line $lineIndex: ${line.take(100)}...\n")
+                        }
+                        return@forEachIndexed
+                    }
 
                     if (shouldProcessLine(line, request.lastProcessedTimestamp, context)) {
                         currentChunkLines.add(line)
@@ -81,7 +99,7 @@ class DataSplitterLambda : RequestHandler<SplitterRequest, SplitterResponse> {
                 }
             }
 
-            context.logger.log("Data splitting complete. Total chunks: ${chunks.size}, Total lines: $totalLines\n")
+            context.logger.log("Data splitting complete. Total chunks: ${chunks.size}, Total lines: $totalLines, Skipped lines: $skippedLines\n")
 
             return SplitterResponse(
                 chunks = chunks,
@@ -91,16 +109,25 @@ class DataSplitterLambda : RequestHandler<SplitterRequest, SplitterResponse> {
 
         } catch (e: Exception) {
             context.logger.log("Error in data splitting: ${e.message}\n")
-            e.printStackTrace()
-            throw e
+            context.logger.log("Stack trace: ${e.stackTraceToString()}\n")
+            throw RuntimeException("Data splitting failed: ${e.message}", e)
+        }
+    }
+
+    private fun isValidJson(line: String, context: Context): Boolean {
+        return try {
+            objectMapper.readTree(line)
+            true
+        } catch (e: Exception) {
+            false
         }
     }
 
     private fun shouldProcessLine(line: String, lastProcessedTimestamp: String?, context: Context): Boolean {
         if (lastProcessedTimestamp == null) return true
 
-        try {
-            val json = objectMapper.readTree(line)
+        return try {
+            val json: JsonNode = objectMapper.readTree(line)
             val lastModified = json.get("last_modified_t")?.asLong()
 
             if (lastModified != null) {
@@ -109,41 +136,50 @@ class DataSplitterLambda : RequestHandler<SplitterRequest, SplitterResponse> {
                     .toLocalDateTime()
                     .toString()
                 return productTimestamp > lastProcessedTimestamp
+            } else {
+                // If no timestamp, include the line
+                context.logger.log("No last_modified_t field found, including line\n")
+                return true
             }
         } catch (e: Exception) {
             context.logger.log("Warning: Could not parse timestamp for line, including it: ${e.message}\n")
+            return true
         }
-
-        return true
     }
 
     private fun saveChunkToS3(lines: List<String>, chunkNumber: Int, timestamp: String, context: Context): ChunkInfo {
         val key = "etl/chunks/$timestamp/chunk-${chunkNumber.toString().padStart(4, '0')}.jsonl.gz"
-        val compressedData = ByteArrayOutputStream().use { baos ->
-            GZIPOutputStream(baos).bufferedWriter().use { writer ->
-                lines.forEach { line ->
-                    writer.write(line)
-                    writer.newLine()
+
+        return try {
+            val compressedData = ByteArrayOutputStream().use { baos ->
+                GZIPOutputStream(baos).bufferedWriter().use { writer ->
+                    lines.forEach { line ->
+                        writer.write(line)
+                        writer.newLine()
+                    }
                 }
+                baos.toByteArray()
             }
-            baos.toByteArray()
+
+            val putRequest = PutObjectRequest.builder()
+                .bucket(bucketName)
+                .key(key)
+                .contentType("application/gzip")
+                .build()
+
+            s3.putObject(putRequest, RequestBody.fromBytes(compressedData))
+
+            context.logger.log("Uploaded chunk to s3://$bucketName/$key (${compressedData.size} bytes, ${lines.size} lines)\n")
+
+            ChunkInfo(
+                bucket = bucketName,
+                key = key,
+                chunkId = "chunk-$chunkNumber",
+                estimatedLines = lines.size
+            )
+        } catch (e: Exception) {
+            context.logger.log("Error saving chunk to S3: ${e.message}\n")
+            throw RuntimeException("Failed to save chunk $chunkNumber to S3", e)
         }
-
-        val putRequest = PutObjectRequest.builder()
-            .bucket(bucketName)
-            .key(key)
-            .contentType("application/gzip")
-            .build()
-
-        s3.putObject(putRequest, RequestBody.fromBytes(compressedData))
-
-        context.logger.log("Uploaded chunk to s3://$bucketName/$key (${compressedData.size} bytes, ${lines.size} lines)\n")
-
-        return ChunkInfo(
-            bucket = bucketName,
-            key = key,
-            chunkId = "chunk-$chunkNumber",
-            estimatedLines = lines.size
-        )
     }
 }
