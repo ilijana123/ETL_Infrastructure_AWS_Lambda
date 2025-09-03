@@ -45,7 +45,7 @@ resource "aws_sfn_state_machine" "openfoodfacts_etl" {
         }
         ResultPath = "$.splitResult"
         Next = "ProcessChunksInParallel"
-        TimeoutSeconds = 900 # 15 minutes for download/split
+        TimeoutSeconds = 900
         Retry = [{
           ErrorEquals = ["States.ALL"]
           IntervalSeconds = 30
@@ -75,7 +75,7 @@ resource "aws_sfn_state_machine" "openfoodfacts_etl" {
                   "chunkId.$" = "$.chunkInfo.chunkId"
                 }
               }
-              TimeoutSeconds = 300 # 5 minutes per chunk
+              TimeoutSeconds = 300
               Retry = [{
                 ErrorEquals = ["States.ALL"]
                 IntervalSeconds = 60
