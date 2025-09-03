@@ -40,7 +40,6 @@ resource "aws_sfn_state_machine" "openfoodfacts_etl" {
           FunctionName = aws_lambda_function.data_splitter.function_name
           Payload = {
             "downloadUrl.$" = "$.changeDetection.Payload.downloadUrl"
-            "lastProcessedTimestamp.$" = "$.changeDetection.Payload.lastProcessedTimestamp"
           }
         }
         ResultPath = "$.splitResult"
