@@ -1,0 +1,11 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowUserToAssume",
+      "Effect": "Allow",
+      "Principal": { "AWS": "arn:aws:iam::736165220280:user/ilijana" },
+      "Action": "sts:AssumeRole"
+    }
+  ]
+}

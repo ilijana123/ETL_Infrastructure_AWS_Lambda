@@ -1,0 +1,8 @@
+rootProject.name = 'lambda'
+
+include(
+        "change-detector",
+        "data-splitter",
+        "chunk-processor",
+        "results-compiler"
+)
