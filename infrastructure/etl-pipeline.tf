@@ -143,8 +143,8 @@ resource "aws_lambda_function" "change_detector" {
   timeout       = 60
   memory_size   = 512
 
-  filename         = "${path.module}/../change-detector/build/libs/change-detector.jar"
-  source_code_hash = filebase64sha256("${path.module}/../change-detector/build/libs/change-detector.jar")
+  filename         = "${path.module}/../change-detector/build/libs/change-detector-all.jar"
+  source_code_hash = filebase64sha256("${path.module}/../change-detector/build/libs/change-detector-all.jar")
 
   environment {
     variables = {
@@ -161,8 +161,8 @@ resource "aws_lambda_function" "data_splitter" {
   timeout       = 900
   memory_size   = 3008
 
-  filename         = "${path.module}/../data-splitter/build/libs/data-splitter.jar"
-  source_code_hash = filebase64sha256("${path.module}/../data-splitter/build/libs/data-splitter.jar")
+  filename         = "${path.module}/../data-splitter/build/libs/data-splitter-all.jar"
+  source_code_hash = filebase64sha256("${path.module}/../data-splitter/build/libs/data-splitter-all.jar")
 
   environment {
     variables = {
@@ -180,8 +180,8 @@ resource "aws_lambda_function" "chunk_processor" {
   timeout       = 300
   memory_size   = 1024
 
-  filename         = "${path.module}/../chunk-processor/build/libs/chunk-processor.jar"
-  source_code_hash = filebase64sha256("${path.module}/../chunk-processor/build/libs/chunk-processor.jar")
+  filename         = "${path.module}/../chunk-processor/build/libs/chunk-processor-all.jar"
+  source_code_hash = filebase64sha256("${path.module}/../chunk-processor/build/libs/chunk-processor-all.jar")
 
   environment {
     variables = {
@@ -201,8 +201,8 @@ resource "aws_lambda_function" "results_compiler" {
   timeout       = 60
   memory_size   = 512
 
-  filename         = "${path.module}/../results-compiler/build/libs/results-compiler.jar"
-  source_code_hash = filebase64sha256("${path.module}/../results-compiler/build/libs/results-compiler.jar")
+  filename         = "${path.module}/../results-compiler/build/libs/results-compiler-all.jar"
+  source_code_hash = filebase64sha256("${path.module}/../results-compiler/build/libs/results-compiler-all.jar")
 
   environment {
     variables = {
