@@ -1,0 +1,65 @@
+name: Deploy ETL Pipeline
+
+on:
+  push:
+    branches: [ "master" ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    env:
+      AWS_REGION: eu-north-1
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      # 1. Setup JDK for Gradle
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      # 2. Build all lambdas
+      - name: Build Lambdas
+        run: ./gradlew clean shadowJar
+
+      # 3. Configure AWS credentials
+      - name: Configure AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # 4. Upload Lambda JARs to S3 (optional, if you want Terraform to pick them up)
+      - name: Upload Lambda JARs to S3
+        run: |
+          aws s3 cp lambda/change-detector/build/libs/change-detector.jar s3://my-etl-artifacts/change-detector.jar
+          aws s3 cp lambda/data-splitter/build/libs/data-splitter.jar s3://my-etl-artifacts/data-splitter.jar
+          aws s3 cp lambda/chunk-processor/build/libs/chunk-processor.jar s3://my-etl-artifacts/chunk-processor.jar
+          aws s3 cp lambda/results-compiler/build/libs/results-compiler.jar s3://my-etl-artifacts/results-compiler.jar
+
+      # 5. Setup Terraform
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      # 6. Terraform init/validate/plan/apply
+      - name: Terraform Init
+        working-directory: infra
+        run: terraform init
+
+      - name: Terraform Validate
+        working-directory: infra
+        run: terraform validate
+
+      - name: Terraform Plan
+        working-directory: infra
+        run: terraform plan -out=tfplan
+
+      - name: Terraform Apply
+        if: github.ref == 'refs/heads/master'
+        working-directory: infra
+        run: terraform apply -auto-approve tfplan
