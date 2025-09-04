@@ -36,7 +36,7 @@ class DataSplitterLambda : RequestHandler<Map<String, Any>, SplitterResponse> {
         val request = if (input.containsKey("source") && input["source"] == "aws.events") {
             context.logger.log("Received a scheduled event. Using default values for SplitterRequest.\n")
             SplitterRequest(
-                downloadUrl = System.getenv("DOWNLOAD_URL") ?: "https://static.openfoodfacts.org/data/openfoodfacts-products.jsonl.gz",
+                downloadUrl = "https://static.openfoodfacts.org/data/openfoodfacts-products.jsonl.gz",
                 lastProcessedTimestamp = System.getenv("LAST_PROCESSED_TIMESTAMP")
             )
         } else {
